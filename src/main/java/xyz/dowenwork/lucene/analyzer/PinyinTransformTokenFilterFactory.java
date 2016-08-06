@@ -7,10 +7,11 @@ import org.apache.lucene.analysis.util.TokenFilterFactory;
 import java.util.Map;
 
 /**
- * <p>create at 16-6-3</p>
+ * Lucene pinyin transform TokenFilterFactory
  *
  * @author liufl
- * @since 5.5.0.0
+ * @author ra
+ * @since 5.5.1
  */
 public class PinyinTransformTokenFilterFactory extends TokenFilterFactory {
     private boolean isOutChinese = true; // 是否输出原中文开关

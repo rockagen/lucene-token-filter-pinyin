@@ -4,6 +4,7 @@ import net.sourceforge.pinyin4j.PinyinHelper;
 import net.sourceforge.pinyin4j.format.HanyuPinyinCaseType;
 import net.sourceforge.pinyin4j.format.HanyuPinyinOutputFormat;
 import net.sourceforge.pinyin4j.format.HanyuPinyinToneType;
+import net.sourceforge.pinyin4j.format.HanyuPinyinVCharType;
 import net.sourceforge.pinyin4j.format.exception.BadHanyuPinyinOutputFormatCombination;
 import org.apache.lucene.analysis.TokenFilter;
 import org.apache.lucene.analysis.TokenStream;
@@ -16,13 +17,13 @@ import java.io.IOException;
 import java.util.*;
 
 /**
+ *
  * 拼音转换分词过滤器
- * <p>create at 16-6-3</p>
  *
  * @author liufl
- * @since 5.5.0.0
+ * @author ra
+ * @since 5.5.1
  */
-@SuppressWarnings("WeakerAccess")
 public class PinyinTransformTokenFilter extends TokenFilter {
     /**
      * 只输出拼音
@@ -46,7 +47,7 @@ public class PinyinTransformTokenFilter extends TokenFilter {
     private int _minTermLength = 2; // 中文词组长度过滤，默认超过2位长度的中文才转换拼音
     private int maxPolyphoneFreq = DEFAULT_MAX_POLYPHONE_FREQ; // 多音字出现次数(缩写不同),超过不再做组合(避免内存溢出)
 
-    private HanyuPinyinOutputFormat outputFormat = new HanyuPinyinOutputFormat(); // 拼音转接输出格式
+    private final HanyuPinyinOutputFormat outputFormat = new HanyuPinyinOutputFormat(); // 拼音转接输出格式
 
     private char[] curTermBuffer; // 底层词元输入缓存
     private int curTermLength; // 底层词元输入长度
@@ -59,6 +60,7 @@ public class PinyinTransformTokenFilter extends TokenFilter {
     private Iterator<String> termIte = null; // 拼音结果集迭代器
     private boolean termIteRead = false; // 拼音结果集迭代器赋值后是否被读取标志
     private int inputTermPosInc = 1; // 输入Term的位置增量值
+
 
     /**
      * 构造器。默认长度超过2的中文词元进行转换，转换为全拼音且保留原中文词元
@@ -126,6 +128,7 @@ public class PinyinTransformTokenFilter extends TokenFilter {
         this.isOutChinese = isOutChinese;
         this.outputFormat.setCaseType(HanyuPinyinCaseType.LOWERCASE);
         this.outputFormat.setToneType(HanyuPinyinToneType.WITHOUT_TONE);
+        this.outputFormat.setVCharType(HanyuPinyinVCharType.WITH_V);
         this.type = type;
         addAttribute(OffsetAttribute.class); // 偏移量属性
     }
@@ -233,7 +236,6 @@ public class PinyinTransformTokenFilter extends TokenFilter {
             this.hasCurOut = false; // 下次取词元后输出原词元（如果开关也准许）
         }
     }
-
     /**
      * 获取拼音缩写
      *
@@ -241,7 +243,7 @@ public class PinyinTransformTokenFilter extends TokenFilter {
      * @return 转换后的文本
      * @throws BadHanyuPinyinOutputFormatCombination
      */
-    private Collection<String> getPinyinAbbreviation(String chinese)
+    private Set<String> getPinyinAbbreviation(String chinese)
             throws BadHanyuPinyinOutputFormatCombination {
         List<String[]> pinyinList = new LinkedList<>();
         for (int i = 0; i < chinese.length(); i++) {
@@ -252,12 +254,18 @@ public class PinyinTransformTokenFilter extends TokenFilter {
             }
         }
         Set<String> abbrSet = new HashSet<>();
+        Set<String> preAbbrs = new HashSet<>();
 
         int polyPhoneFreq = 0;
-        for (String[] array : pinyinList) {
+
+        Iterator<String[]> it = pinyinList.iterator();
+
+        while (it.hasNext()) {
+            String[] array = getDistinctPinyinAbbr(it.next());
 
             if (!abbrSet.isEmpty()) {
-                Set<String> preAbbrs = new HashSet<>(abbrSet);
+                preAbbrs.clear();
+                preAbbrs.addAll(abbrSet);
                 abbrSet.clear();
                 for (String preAbbr : preAbbrs) {
                     // Avoid Out of memory exception
@@ -278,8 +286,9 @@ public class PinyinTransformTokenFilter extends TokenFilter {
                     abbrSet.add(pinyin.substring(0, 1));
                 }
             }
+
             // Polyphone
-            if (getDistinctAbbr(array) > 1) {
+            if (array.length > 1) {
                 polyPhoneFreq++;
             }
         }
@@ -294,24 +303,30 @@ public class PinyinTransformTokenFilter extends TokenFilter {
      * @return 转换后的文本
      * @throws BadHanyuPinyinOutputFormatCombination
      */
-    private Collection<String> getPinyin(String chinese)
+    private Set<String> getPinyin(String chinese)
             throws BadHanyuPinyinOutputFormatCombination {
         List<String[]> pinyinList = new ArrayList<>();
         for (int i = 0; i < chinese.length(); i++) {
             String[] pinyinArray = PinyinHelper.toHanyuPinyinStringArray(
-                    chinese.charAt(i), this.outputFormat);
+                    chinese.charAt(i),  this.outputFormat);
             if (pinyinArray != null && pinyinArray.length > 0) {
                 pinyinList.add(pinyinArray);
             }
         }
 
         Set<String> abbrSet = new HashSet<>();
+        Set<String> preAbbrs = new HashSet<>();
 
         int polyPhoneFreq = 0;
-        for (String[] array : pinyinList) {
 
+        Iterator<String[]> it = pinyinList.iterator();
+
+        while (it.hasNext()) {
+
+            String[] array = getDistinctPinyin(it.next());
             if (!abbrSet.isEmpty()) {
-                Set<String> preAbbrs = new HashSet<>(abbrSet);
+                preAbbrs.clear();
+                preAbbrs.addAll(abbrSet);
                 abbrSet.clear();
                 for (String preAbbr : preAbbrs) {
                     // Avoid Out of memory exception
@@ -330,7 +345,7 @@ public class PinyinTransformTokenFilter extends TokenFilter {
                 Collections.addAll(abbrSet, array);
             }
             // Polyphone
-            if (getDistinctAbbr(array) > 1) {
+            if (array.length > 1) {
                 polyPhoneFreq++;
             }
 
@@ -340,15 +355,20 @@ public class PinyinTransformTokenFilter extends TokenFilter {
 
     }
 
-
-    private int getDistinctAbbr(String[] array) {
+    private String[] getDistinctPinyinAbbr(String[] array) {
         Set<String> abbrs = new HashSet<>();
         for (String pinyin : array) {
             abbrs.add(pinyin.substring(0, 1));
         }
-        return abbrs.size();
+        String[] results = new String[abbrs.size()];
+        return abbrs.toArray(results);
     }
 
+    private String[] getDistinctPinyin(String[] array) {
+        Set<String> pinyins = new HashSet<>(Arrays.asList(array));
+        String[] results = new String[pinyins.size()];
+        return pinyins.toArray(results);
+    }
     public void reset() throws IOException {
         super.reset();
     }
